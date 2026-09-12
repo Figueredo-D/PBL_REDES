@@ -1,3 +1,3 @@
 module github.com/Figueredo-D/PBL_REDES
 
-go 1.27.1
+go 1.22
