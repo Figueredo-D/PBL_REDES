@@ -71,9 +71,14 @@ func main() {
 		passengerToken = "passageiro_default"
 	}
 
-	client, err := NewClient("localhost:8080")
+	serverHost := os.Getenv("SERVER_HOST")
+	if serverHost == "" {
+		serverHost = "localhost"
+	}
+
+	client, err := NewClient(serverHost + ":8080")
 	if err != nil {
-		fmt.Printf("\n[ERRO CONEXÃO]: %v\n", err)
+		fmt.Printf("\n[ERRO CONEXÃO] Não foi possível conectar ao servidor (%s:8080): %v\n", serverHost, err)
 		os.Exit(1)
 	}
 	defer client.Close()
@@ -229,7 +234,7 @@ func handleListBookings(client *Client, token string) {
 func handleCancelBooking(client *Client, scanner *bufio.Scanner, token string) {
 	handleListBookings(client, token)
 
-	fmt.Print("\nDigite o ID da Reserva que deseja CANCELAR (ex: BOOK_0000): ")
+	fmt.Print("\nDigite o ID da Reserva que deseja CANCELAR (ex: BOOK_0001): ")
 	scanner.Scan()
 	bookingID := strings.TrimSpace(scanner.Text())
 

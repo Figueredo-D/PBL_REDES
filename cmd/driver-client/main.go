@@ -71,9 +71,14 @@ func main() {
 		driverToken = "driver_default"
 	}
 
-	client, err := NewClient("localhost:8080")
+	serverHost := os.Getenv("SERVER_HOST")
+	if serverHost == "" {
+		serverHost = "localhost"
+	}
+
+	client, err := NewClient(serverHost + ":8080")
 	if err != nil {
-		fmt.Printf("[ERRO] Não foi possível conectar: %v\n", err)
+		fmt.Printf("[ERRO] Não foi possível conectar ao servidor (%s:8080): %v\n", serverHost, err)
 		os.Exit(1)
 	}
 	defer client.Close()

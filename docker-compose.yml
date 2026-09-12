@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: server
+    container_name: ride_server
+    ports:
+      - "8080:8080"
+    restart: always
+
+  driver-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: driver-client
+    container_name: driver_client
+    environment:
+      - SERVER_HOST=server
+    stdin_open: true
+    tty: true
+    depends_on:
+      - server
+
+  passenger-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: passenger-client
+    container_name: passenger_client
+    environment:
+      - SERVER_HOST=server
+    stdin_open: true
+    tty: true
+    depends_on:
+      - server
