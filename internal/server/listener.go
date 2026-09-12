@@ -7,18 +7,24 @@ import (
 	"io"
 	"net"
 	"sync"
+
+	"github.com/Figueredo-D/PBL_REDES/internal/domain"
 	"github.com/Figueredo-D/PBL_REDES/internal/protocol"
 )
 
 type Server struct {
 	address  string
 	listener net.Listener
+	repo     *domain.RideRepository
 	mu       sync.Mutex
 	active   bool
 }
 
 func NewServer(address string) *Server {
-	return &Server{address: address}
+	return &Server{
+		address: address,
+		repo:    domain.NewRideRepository(),
+	}
 }
 
 func (s *Server) Start() error {
@@ -50,7 +56,6 @@ func (s *Server) Start() error {
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	remoteAddr := conn.RemoteAddr().String()
-	fmt.Printf("[SERVER] Conexão aberta: %s\n", remoteAddr)
 
 	reader := bufio.NewReader(conn)
 
@@ -72,11 +77,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 			})
 			continue
 		}
+
 		resp := s.dispatch(req)
 		s.sendResponse(conn, resp)
 	}
-
-	fmt.Printf("[SERVER] Conexão fechada: %s\n", remoteAddr)
 }
 
 func (s *Server) dispatch(req protocol.Request) protocol.Response {
@@ -85,38 +89,103 @@ func (s *Server) dispatch(req protocol.Request) protocol.Response {
 	case protocol.ActionOfferRide:
 		var data protocol.OfferRideData
 		if err := json.Unmarshal([]byte(req.Data), &data); err != nil {
-			return protocol.Response{Status: "ERROR", Code: "INVALID_DATA", Message: "Payload de oferta de carona inválido."}
+			return protocol.Response{Status: "ERROR", Code: "INVALID_DATA", Message: "Payload de oferta inválido."}
 		}
-		// TODO:LÓGICA DE NEGÓCIO DA CARONA
+
+		ride, err := domain.NewRide("", req.Token, data.Route, data.Date, data.Time, data.TotalSeats, data.SegmentPrices)
+		if err != nil {
+			return protocol.Response{Status: "ERROR", Code: "VALIDATION_FAILED", Message: err.Error()}
+		}
+
+		rideID := s.repo.Add(ride)
+		fmt.Printf("[SERVER] Carona %s ofertada por %s.\n", rideID, req.Token)
+
 		return protocol.Response{
 			Status:  "SUCCESS",
-			Message: fmt.Sprintf("Carona de %s para %s registrada com sucesso.", data.Route[0], data.Route[len(data.Route)-1]),
+			Message: fmt.Sprintf("Carona registrada sob o ID %s.", rideID),
+			Data:    fmt.Sprintf(`{"ride_id":"%s"}`, rideID),
 		}
+
+	case protocol.ActionListRides:
+		rides := s.repo.ListByDriver(req.Token)
+		bytes, _ := json.Marshal(rides)
+		return protocol.Response{Status: "SUCCESS", Data: string(bytes)}
+
+	case protocol.ActionCancelRide:
+		var data protocol.CancelRideData
+		if err := json.Unmarshal([]byte(req.Data), &data); err != nil {
+			return protocol.Response{Status: "ERROR", Code: "INVALID_DATA", Message: "Payload inválido."}
+		}
+
+		if err := s.repo.CancelRide(data.RideID, req.Token); err != nil {
+			return protocol.Response{Status: "ERROR", Code: "CANCEL_FAILED", Message: err.Error()}
+		}
+
+		fmt.Printf("[SERVER] Carona %s cancelada por %s.\n", data.RideID, req.Token)
+		return protocol.Response{Status: "SUCCESS", Message: "Carona cancelada com sucesso."}
 
 	case protocol.ActionSearchItinerary:
 		var data protocol.SearchItineraryData
 		if err := json.Unmarshal([]byte(req.Data), &data); err != nil {
 			return protocol.Response{Status: "ERROR", Code: "INVALID_DATA", Message: "Payload de busca inválido."}
 		}
-		//TODO: LÓGICA DE BUSCA DE ITINERÁRIO
+
+		filter := domain.SearchFilter{
+			Origin:      data.Origin,
+			Destination: data.Destination,
+			Date:        data.Date,
+		}
+
+		itineraries := s.repo.SearchItineraries(filter)
+		jsonResult, _ := json.Marshal(itineraries)
+
 		return protocol.Response{
 			Status:  "SUCCESS",
-			Message: fmt.Sprintf("Busca realizada para %s -> %s em %s.", data.Origin, data.Destination, data.Date),
+			Message: fmt.Sprintf("Encontradas %d opção(ões).", len(itineraries)),
+			Data:    string(jsonResult),
 		}
 
 	case protocol.ActionBookItinerary:
-		var data protocol.BookItineraryData
-		if err := json.Unmarshal([]byte(req.Data), &data); err != nil {
+		var itin domain.ItineraryResult
+		if err := json.Unmarshal([]byte(req.Data), &itin); err != nil {
 			return protocol.Response{Status: "ERROR", Code: "INVALID_DATA", Message: "Payload de reserva inválido."}
 		}
-		//TODO:LÓGICA DE RESERVA 
-		return protocol.Response{Status: "SUCCESS", Message: "Itinerário reservado com sucesso."}
+
+		bookingID, err := s.repo.BookItinerary(req.Token, itin)
+		if err != nil {
+			return protocol.Response{Status: "ERROR", Code: "BOOKING_FAILED", Message: err.Error()}
+		}
+
+		fmt.Printf("[SERVER] Reserva %s realizada por %s.\n", bookingID, req.Token)
+		return protocol.Response{
+			Status:  "SUCCESS",
+			Message: fmt.Sprintf("Reserva confirmada sob o ID %s.", bookingID),
+			Data:    fmt.Sprintf(`{"booking_id":"%s"}`, bookingID),
+		}
+
+	case protocol.ActionCancelBooking:
+		var data protocol.CancelBookingData
+		if err := json.Unmarshal([]byte(req.Data), &data); err != nil {
+			return protocol.Response{Status: "ERROR", Code: "INVALID_DATA", Message: "Payload de cancelamento inválido."}
+		}
+
+		if err := s.repo.CancelBooking(data.BookingID, req.Token); err != nil {
+			return protocol.Response{Status: "ERROR", Code: "CANCEL_FAILED", Message: err.Error()}
+		}
+
+		fmt.Printf("[SERVER] Reserva %s cancelada por %s.\n", data.BookingID, req.Token)
+		return protocol.Response{Status: "SUCCESS", Message: "Reserva cancelada com sucesso."}
+
+	case protocol.ActionListBookings:
+		bookings := s.repo.ListBookingsByPassenger(req.Token)
+		bytes, _ := json.Marshal(bookings)
+		return protocol.Response{Status: "SUCCESS", Data: string(bytes)}
 
 	default:
 		return protocol.Response{
 			Status:  "ERROR",
 			Code:    "UNKNOWN_ACTION",
-			Message: fmt.Sprintf("Ação '%s' desconhecida pelo protocolo.", req.Action),
+			Message: fmt.Sprintf("Ação '%s' desconhecida.", req.Action),
 		}
 	}
 }
